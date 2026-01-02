@@ -32,8 +32,7 @@
 
 		// 受信専用のトランシーバーを追加（SDPエラー防止）
 		pc.addTransceiver('video', { direction: 'recvonly' });
-		// 音声も必要なら下記を有効化
-		// pc.addTransceiver('audio', { direction: 'recvonly' });
+		pc.addTransceiver('audio', { direction: 'recvonly' });
 
 		// シグナリング: offer送信
 		ws.onopen = async () => {
@@ -59,17 +58,15 @@
 			}
 		};
 
-		// 映像トラック受信
+		// トラック受信（映像・音声）
 		pc.ontrack = (event) => {
-			if (event.track.kind === 'video') {
+			// 最初のstreamにvideo/audio両方入るので一度だけsrcObjectをセット
+			if (video.srcObject !== event.streams[0]) {
 				video.srcObject = event.streams[0];
 			}
 		};
 
-		// 受信専用のトラックを追加
-		pc.addTransceiver('video', { direction: 'recvonly' });
-		// 音声も必要なら
-		//pc.addTransceiver('audio', { direction: 'recvonly' });
+		// 受信専用のトラックを追加（冗長なため削除）
 	</script>
 </body>
 </html>
