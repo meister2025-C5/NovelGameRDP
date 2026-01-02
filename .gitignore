@@ -2,3 +2,5 @@
 include/*
 
 !*.gitkeep
+
+venv/
