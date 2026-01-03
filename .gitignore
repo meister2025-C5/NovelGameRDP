@@ -6,3 +6,8 @@ include/*
 venv/
 
 *.wav
+
+.nextcloudsync.log
+.sync_b600f085897e.db
+.sync_b600f085897e.db-wal
+Desktop.ini
