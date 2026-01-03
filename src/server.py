@@ -18,7 +18,7 @@ SCREEN_MONITOR_INDEX = 1  # mssのmonitor番号（1=メイン画面）
 
 # 音声キャプチャ設定
 AUDIO_DEVICE_NAME = "ステレオ ミキサー (Realtek(R) Audio)"  # デバイス名
-AUDIO_HOSTAPI = "WASAPI"  # MMEを明示
+AUDIO_HOSTAPI = "MME"  # MMEを明示
 AUDIO_SAMPLE_RATE = 44100
 AUDIO_CHANNELS = 1
 AUDIO_BLOCKSIZE = 960  # 20ms @ 48kHz

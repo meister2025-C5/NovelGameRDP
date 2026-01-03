@@ -25,48 +25,118 @@
 		<!-- 下黒帯 -->
 		<div style="flex:0 0 5vh; background:#000;"></div>
 	</div>
+
+	<!-- メニュー -->
+	<div id="menu" style="position:fixed; top:0; right:-200px; width:200px; height:100%; background:#333; color:#fff; box-shadow:-5px 0 10px rgba(0,0,0,0.5); transition:right 0.3s;">
+		<button id="connectBtn" style="width:100%; padding:10px; background:#4CAF50; color:#fff; border:none;">接続</button>
+		<button id="disconnectBtn" style="width:100%; padding:10px; background:#f44336; color:#fff; border:none;">切断</button>
+	</div>
+
+	<!-- メニュートグルボタン -->
+	<button id="menuToggle" style="position:fixed; top:50%; right:0; transform:translateY(-50%); background:#333; color:#fff; border:none; border-radius:5px 0 0 5px; padding:10px;">＞</button>
+
 	<script>
-		const ws = new WebSocket('ws://' + location.hostname + ':8765');
-		const pc = new RTCPeerConnection();
+		const menu = document.getElementById('menu');
+		const menuToggle = document.getElementById('menuToggle');
+		let menuOpen = false;
+
+		menuToggle.addEventListener('click', () => {
+			menuOpen = !menuOpen;
+			menu.style.right = menuOpen ? '0' : '-200px';
+			menuToggle.textContent = menuOpen ? '＜' : '＞';
+		});
+
+		const connectBtn = document.getElementById('connectBtn');
+		const disconnectBtn = document.getElementById('disconnectBtn');
+		let ws = null;
+		let pc = null;
 		const video = document.getElementById('remoteVideo');
 
-		// 受信専用のトランシーバーを追加（SDPエラー防止）
-		pc.addTransceiver('video', { direction: 'recvonly' });
-		pc.addTransceiver('audio', { direction: 'recvonly' });
+		// 接続処理
+		connectBtn.addEventListener('click', async () => {
+			try {
+				// WebSocketとPeerConnectionを再生成
+				if (ws) {
+					ws.close();
+				}
+				ws = new WebSocket('ws://' + location.hostname + ':8765');
 
-		// シグナリング: offer送信
-		ws.onopen = async () => {
-			const offer = await pc.createOffer();
-			await pc.setLocalDescription(offer);
-			ws.send(JSON.stringify({sdp: offer.sdp, type: offer.type}));
-		};
+				if (pc) {
+					pc.close();
+				}
+				pc = new RTCPeerConnection();
 
-		// シグナリング: answer/ICE candidate受信
-		ws.onmessage = async (event) => {
-			const msg = JSON.parse(event.data);
-			if (msg.type === 'answer') {
-				await pc.setRemoteDescription(new RTCSessionDescription(msg));
-			} else if (msg.type === 'candidate' && msg.candidate) {
-				await pc.addIceCandidate(msg.candidate);
+				// トランシーバーを追加
+				pc.addTransceiver('video', { direction: 'recvonly' });
+				pc.addTransceiver('audio', { direction: 'recvonly' });
+
+				// シグナリング: offer送信
+				const offer = await pc.createOffer();
+				await pc.setLocalDescription(offer);
+				ws.onopen = () => {
+					ws.send(JSON.stringify({ sdp: offer.sdp, type: offer.type }));
+				};
+
+				// シグナリング: answer/ICE candidate受信
+				ws.onmessage = async (event) => {
+					const msg = JSON.parse(event.data);
+					if (msg.type === 'answer') {
+						await pc.setRemoteDescription(new RTCSessionDescription(msg));
+					} else if (msg.type === 'candidate' && msg.candidate) {
+						await pc.addIceCandidate(msg.candidate);
+					}
+				};
+
+				// ICE candidate送信
+				pc.onicecandidate = (event) => {
+					if (event.candidate) {
+						ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+					}
+				};
+
+				// トラック受信（映像・音声）
+				pc.ontrack = (event) => {
+					if (video.srcObject !== event.streams[0]) {
+						video.srcObject = event.streams[0];
+					}
+				};
+
+				alert('接続しました');
+			} catch (error) {
+				console.error('接続エラー:', error);
+				alert('接続に失敗しました');
 			}
-		};
+		});
 
-		// ICE candidate送信
-		pc.onicecandidate = (event) => {
-			if (event.candidate) {
-				ws.send(JSON.stringify({type: 'candidate', candidate: event.candidate}));
+		// 切断処理
+		disconnectBtn.addEventListener('click', async () => {
+			try {
+				// WebSocketを閉じる
+				if (ws) {
+					ws.close();
+					ws = null;
+				}
+
+				// PeerConnectionを閉じる
+				if (pc) {
+					pc.getSenders().forEach((sender) => pc.removeTrack(sender));
+					pc.close();
+					pc = null;
+				}
+
+				// ビデオストリームを停止
+				if (video.srcObject) {
+					const tracks = video.srcObject.getTracks();
+					tracks.forEach((track) => track.stop());
+					video.srcObject = null;
+				}
+
+				alert('切断しました');
+			} catch (error) {
+				console.error('切断エラー:', error);
+				alert('切断に失敗しました');
 			}
-		};
-
-		// トラック受信（映像・音声）
-		pc.ontrack = (event) => {
-			// 最初のstreamにvideo/audio両方入るので一度だけsrcObjectをセット
-			if (video.srcObject !== event.streams[0]) {
-				video.srcObject = event.streams[0];
-			}
-		};
-
-		// 受信専用のトラックを追加（冗長なため削除）
+		});
 	</script>
 </body>
 </html>
