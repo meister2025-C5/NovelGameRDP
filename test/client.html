@@ -48,18 +48,27 @@
 
 		const connectBtn = document.getElementById('connectBtn');
 		const disconnectBtn = document.getElementById('disconnectBtn');
+		const ipInput = document.createElement('input');
+		ipInput.type = 'text';
+		ipInput.placeholder = 'サーバーIP';
+		ipInput.style.width = '100%';
+		ipInput.style.padding = '10px';
+		ipInput.style.marginBottom = '10px';
+		menu.insertBefore(ipInput, connectBtn);
+
 		let ws = null;
 		let pc = null;
 		const video = document.getElementById('remoteVideo');
 
 		// 接続処理
 		connectBtn.addEventListener('click', async () => {
+			const serverIp = ipInput.value || location.hostname;
 			try {
 				// WebSocketとPeerConnectionを再生成
 				if (ws) {
 					ws.close();
 				}
-				ws = new WebSocket('ws://' + location.hostname + ':8765');
+				ws = new WebSocket(`ws://${serverIp}:8765`);
 
 				if (pc) {
 					pc.close();

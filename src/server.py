@@ -21,6 +21,8 @@ SCREEN_MONITOR_INDEX = 1  # mssのmonitor番号（1=メイン画面）
 AUDIO_SAMPLE_RATE = 48000
 AUDIO_CHANNELS = 1
 
+# サーバーのIPアドレス設定
+SERVER_IP = "192.168.128.125"  # 必要に応じて変更可能
 
 class SystemAudioTrack(AudioStreamTrack):
 	kind = "audio"
@@ -172,8 +174,8 @@ async def offer(websocket, path):
         print("Error in offer handler:", e)
 
 async def main():
-	async with websockets.serve(offer, "0.0.0.0", 8765):
-		print("Signaling server started on ws://0.0.0.0:8765")
+	async with websockets.serve(offer, SERVER_IP, 8765):
+		print(f"Signaling server started on ws://{SERVER_IP}:8765")
 		await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
