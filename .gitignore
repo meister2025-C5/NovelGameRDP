@@ -10,4 +10,5 @@ venv/
 .nextcloudsync.log
 .sync_b600f085897e.db
 .sync_b600f085897e.db-wal
+.sync_b600f085897e.db-shm
 Desktop.ini
