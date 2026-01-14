@@ -10,19 +10,46 @@ import mss
 import sounddevice as sd
 import threading
 import wave
+import os
 
 
+
+# 設定ファイルの絶対パスを取得
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+
+# デフォルト設定
+default_settings = {
+    "SCREEN_FPS": 30,
+    "SCREEN_MONITOR_INDEX": 2,
+    "AUDIO_SAMPLE_RATE": 48000,
+    "AUDIO_CHANNELS": 1,
+    "SERVER_IP": "192.168.128.125"
+}
+
+# 設定を読み込む関数
+def load_settings():
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            settings = json.load(f)
+            print("読み込んだ設定:", settings)  # デバッグ用出力
+            return settings
+    except FileNotFoundError:
+        print("設定ファイルが見つかりません。デフォルト設定を使用します。")
+        return default_settings
+
+# 設定を読み込む
+settings = load_settings()
 
 # 画面キャプチャ設定
-SCREEN_FPS = 30  # キャプチャフレームレート
-SCREEN_MONITOR_INDEX = 1  # mssのmonitor番号（1=メイン画面）
+SCREEN_FPS = settings["SCREEN_FPS"]
+SCREEN_MONITOR_INDEX = settings["SCREEN_MONITOR_INDEX"]
 
 # 音声キャプチャ設定
-AUDIO_SAMPLE_RATE = 48000
-AUDIO_CHANNELS = 1
+AUDIO_SAMPLE_RATE = settings["AUDIO_SAMPLE_RATE"]
+AUDIO_CHANNELS = settings["AUDIO_CHANNELS"]
 
 # サーバーのIPアドレス設定
-SERVER_IP = "192.168.128.125"  # 必要に応じて変更可能
+SERVER_IP = settings["SERVER_IP"]
 
 class SystemAudioTrack(AudioStreamTrack):
 	kind = "audio"
