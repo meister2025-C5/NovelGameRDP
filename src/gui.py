@@ -3,6 +3,7 @@ from tkinter import messagebox
 import json
 import subprocess
 import os
+import socket
 
 # 設定ファイルのパス
 CONFIG_FILE = "src/config.json"
@@ -71,8 +72,23 @@ def stop_server():
     else:
         messagebox.showwarning("警告", "サーバーは起動していません！")
 
+# IPv4アドレスを取得する関数
+def get_ipv4_address():
+    try:
+        hostname = socket.gethostname()
+        ipv4_address = socket.gethostbyname(hostname)
+        return ipv4_address
+    except Exception as e:
+        print(f"IPv4アドレスの取得中にエラーが発生しました: {e}")
+        return None
+
 # 現在の設定を読み込む
 current_settings = load_settings()
+
+# SERVER_IPを自動取得したIPアドレスに更新
+ipv4_address = get_ipv4_address()
+if ipv4_address:
+    current_settings["SERVER_IP"] = ipv4_address
 
 # GUIの構築
 root = tk.Tk()
