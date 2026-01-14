@@ -12,3 +12,5 @@ venv/
 .sync_b600f085897e.db-wal
 .sync_b600f085897e.db-shm
 Desktop.ini
+
+dist/
