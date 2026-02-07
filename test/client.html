@@ -38,6 +38,11 @@
 				<div id="volBar" style="width:0%; height:100%; background:#0f0; transition:width 0.1s;"></div>
 			</div>
 		</div>
+
+		<!-- 接続状態インジケータ -->
+		<div style="padding:10px; font-size:14px; color:#fff;">
+			接続状態: <span id="connectionStatus" style="font-weight:bold; color:#f44;">停止中</span>
+		</div>
 	</div>
 
 	<!-- メニュートグルボタン -->
@@ -68,9 +73,26 @@
 		let pc = null;
 		const video = document.getElementById('remoteVideo');
 		let audioCtx = null;
+		let isOfferSent = false;
+		let candidateQueue = [];
 		let analyser = null;
 		let dataArray = null;
 		let volInterval = null;
+		const connectionStatusElem = document.getElementById('connectionStatus');
+
+		function setConnectionStatus(state) {
+			if (!connectionStatusElem) return;
+			if (state === 'connected') {
+				connectionStatusElem.textContent = '接続中';
+				connectionStatusElem.style.color = '#0f0';
+			} else if (state === 'connecting') {
+				connectionStatusElem.textContent = '接続中...';
+				connectionStatusElem.style.color = '#ff0';
+			} else {
+				connectionStatusElem.textContent = '停止中';
+				connectionStatusElem.style.color = '#f44';
+			}
+		}
 
 		// 接続処理
 		connectBtn.addEventListener('click', async () => {
@@ -96,9 +118,20 @@
 				// create AudioContext on user gesture (connect button)
 				audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 				await pc.setLocalDescription(offer);
-				ws.onopen = () => {
+				const handleWsOpen = () => {
 					ws.send(JSON.stringify({ sdp: offer.sdp, type: offer.type }));
+					isOfferSent = true;
+					// flush queued candidates
+					while (candidateQueue.length) {
+						const c = candidateQueue.shift();
+						ws.send(JSON.stringify({ type: 'candidate', candidate: c }));
+					}
 				};
+				ws.onopen = handleWsOpen;
+				// if websocket already opened (rare), call handler immediately
+				if (ws.readyState === WebSocket.OPEN) {
+					handleWsOpen();
+				}
 
 				// シグナリング: answer/ICE candidate受信
 				ws.onmessage = async (event) => {
@@ -113,7 +146,11 @@
 				// ICE candidate送信
 				pc.onicecandidate = (event) => {
 					if (event.candidate) {
-						ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+						if (ws && ws.readyState === WebSocket.OPEN && isOfferSent) {
+							ws.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+						} else {
+							candidateQueue.push(event.candidate);
+						}
 					}
 				};
 
@@ -151,16 +188,25 @@
 								document.getElementById('volText').textContent = display;
 								// console.log(`Client Volume: ${display}%`);
 							}, 200);
+							try { video.play().catch(()=>{}); } catch(e) {}
 						} catch (e) {
 							console.error('audio analyse error', e);
 						}
 					}
 				};
 
-				alert('接続しました');
+				pc.onconnectionstatechange = () => {
+					console.log('PC connectionState=', pc.connectionState);
+					if (pc.connectionState === 'connected') setConnectionStatus('connected');
+					else if (pc.connectionState === 'connecting') setConnectionStatus('connecting');
+					else setConnectionStatus('stopped');
+				};
+
+				console.log('connect handler finished');
+				setConnectionStatus('connecting');
 			} catch (error) {
 				console.error('接続エラー:', error);
-				alert('接続に失敗しました');
+				setConnectionStatus('stopped');
 			}
 		});
 
@@ -187,10 +233,11 @@
 					video.srcObject = null;
 				}
 
-				alert('切断しました');
+				console.log('切断しました');
+				setConnectionStatus('stopped');
 			} catch (error) {
 				console.error('切断エラー:', error);
-				alert('切断に失敗しました');
+				setConnectionStatus('stopped');
 			}
 		});
 	</script>

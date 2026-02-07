@@ -3,7 +3,7 @@
 import asyncio
 import json
 import websockets
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, AudioStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, AudioStreamTrack, RTCIceCandidate
 import cv2
 import numpy as np
 import mss
@@ -154,62 +154,105 @@ class ScreenTrack(VideoStreamTrack):
 pcs = set()
 
 async def offer(websocket, path):
-    try:
-        params = await websocket.recv()
-        params = json.loads(params)
+	try:
+		pc = RTCPeerConnection()
+		pcs.add(pc)
+		print("Created for", path)
 
-        # Validate SDP parameters
-        if "sdp" not in params or "type" not in params:
-            print("Invalid SDP parameters received")
-            return
+		# 画面キャプチャトラックを追加
+		screen_track = ScreenTrack(fps=SCREEN_FPS, monitor_index=SCREEN_MONITOR_INDEX)
+		pc.addTrack(screen_track)
 
-        offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+		# 音声キャプチャトラックを追加
+		audio_track = SystemAudioTrack()
+		audio_track.start_recording()  # Start recording when client connects
+		pc.addTrack(audio_track)
 
-        pc = RTCPeerConnection()
-        pcs.add(pc)
-        print("Created for", path)
+		# send server ICE candidates to client
+		@pc.on("icecandidate")
+		async def on_icecandidate(candidate):
+			if candidate:
+				try:
+					await websocket.send(json.dumps({"type": "candidate", "candidate": candidate}))
+				except Exception as e:
+					print("Failed to send candidate:", e)
 
-        # 画面キャプチャトラックを追加
-        screen_track = ScreenTrack(fps=SCREEN_FPS, monitor_index=SCREEN_MONITOR_INDEX)
-        pc.addTrack(screen_track)
+		# buffer for any incoming candidates before remote description is set
+		candidate_buffer = []
 
-        # 音声キャプチャトラックを追加
-        audio_track = SystemAudioTrack()
-        audio_track.start_recording()  # Start recording when client connects
-        pc.addTrack(audio_track)
+		# read signaling messages until websocket closes
+		while True:
+			try:
+				msg_raw = await websocket.recv()
+			except Exception:
+				break
 
-        @pc.on("icecandidate")
-        async def on_icecandidate(candidate):
-            if candidate:
-                await websocket.send(json.dumps({"type": "candidate", "candidate": candidate}))
+			try:
+				msg = json.loads(msg_raw)
+			except Exception:
+				print("Received non-json signaling message")
+				continue
 
-        # クライアントからのICE candidate受信
-        async def ice_listener():
-            while True:
-                try:
-                    msg = await websocket.recv()
-                    msg = json.loads(msg)
-                    if msg["type"] == "candidate":
-                        await pc.addIceCandidate(msg["candidate"])
-                except Exception:
-                    break
+			# Offer handling
+			if msg.get("type") == "offer" and "sdp" in msg:
+				offer = RTCSessionDescription(sdp=msg["sdp"], type=msg["type"])
+				await pc.setRemoteDescription(offer)
 
-        await pc.setRemoteDescription(offer)
-        answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        await websocket.send(json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}))
+				# apply any buffered candidates (convert dict->RTCIceCandidate)
+				for c in candidate_buffer:
+					try:
+						if isinstance(c, dict):
+							rtc_c = RTCIceCandidate(
+								sdpMid=c.get('sdpMid'),
+								sdpMLineIndex=c.get('sdpMLineIndex'),
+								candidate=c.get('candidate')
+							)
+							await pc.addIceCandidate(rtc_c)
+						else:
+							await pc.addIceCandidate(c)
+					except Exception as e:
+						print("Error adding buffered candidate:", e)
+				candidate_buffer.clear()
 
-        # ICE candidateの受信を別タスクで
-        asyncio.ensure_future(ice_listener())
+				# create and send answer
+				answer = await pc.createAnswer()
+				await pc.setLocalDescription(answer)
+				await websocket.send(json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}))
 
-        # 接続維持
-        await websocket.wait_closed()
-        await audio_track.stop()  # Stop recording when client disconnects
-        await pc.close()
-        pcs.discard(pc)
+			# Candidate handling
+			elif msg.get("type") == "candidate" and msg.get("candidate"):
+				cand = msg["candidate"]
+				# convert incoming candidate dict to RTCIceCandidate
+				try:
+					rtc_cand = RTCIceCandidate(
+						sdpMid=cand.get('sdpMid'),
+						sdpMLineIndex=cand.get('sdpMLineIndex'),
+						candidate=cand.get('candidate')
+					)
+				except Exception:
+					rtc_cand = None
 
-    except Exception as e:
-        print("Error in offer handler:", e)
+				if pc.remoteDescription is None:
+					# buffer the raw dict; will convert when applying
+					candidate_buffer.append(cand)
+				else:
+					if rtc_cand is not None:
+						try:
+							await pc.addIceCandidate(rtc_cand)
+						except Exception as e:
+							print("Error adding candidate:", e)
+					else:
+						print("Invalid candidate format received:", cand)
+			else:
+				print("Unexpected signaling message:", msg)
+
+		# connection closed, cleanup
+		await audio_track.stop()
+		await pc.close()
+		pcs.discard(pc)
+
+	except Exception as e:
+		print("Error in offer handler:", e)
 
 async def main():
 	async with websockets.serve(offer, SERVER_IP, 8765):
