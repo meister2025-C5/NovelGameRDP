@@ -11,6 +11,7 @@ import sounddevice as sd
 import threading
 import wave
 import os
+import fractions
 
 
 
@@ -54,59 +55,69 @@ SERVER_IP = settings["SERVER_IP"]
 class SystemAudioTrack(AudioStreamTrack):
 	kind = "audio"
 
-	def __init__(self, samplerate=AUDIO_SAMPLE_RATE, channels=AUDIO_CHANNELS):
+	def __init__(self, samplerate=AUDIO_SAMPLE_RATE, channels=AUDIO_CHANNELS, device_id=None):
 		super().__init__()
 		self.samplerate = samplerate
 		self.channels = channels
-		self.recording = []  # Store audio chunks
-		self.is_recording = False
+		self.q = asyncio.Queue()
+		self.loop = asyncio.get_event_loop()
 		self.stream = None
+		self.device_id = device_id
+		self._pts = 0
 
 	def start_recording(self):
 		print("Starting audio recording...")
-		self.is_recording = True
-		self.stream = sd.InputStream(
-			samplerate=self.samplerate,
-			channels=self.channels,
-			dtype='int16',
-			callback=self._audio_callback
-		)
-		self.stream.start()
+		blocksize = int(self.samplerate * 0.02)
+		try:
+			if self.device_id is not None:
+				self.stream = sd.InputStream(
+					device=self.device_id,
+					samplerate=self.samplerate,
+					channels=self.channels,
+					dtype='int16',
+					callback=self._audio_callback,
+					blocksize=blocksize
+				)
+			else:
+				self.stream = sd.InputStream(
+					samplerate=self.samplerate,
+					channels=self.channels,
+					dtype='int16',
+					callback=self._audio_callback,
+					blocksize=blocksize
+				)
+			self.stream.start()
+			print(f"Audio stream started (device={self.device_id})")
+		except Exception as e:
+			print(f"Error starting audio stream: {e}")
 
 	def _audio_callback(self, indata, frames, time, status):
-		if self.is_recording:
-			self.recording.append(indata.copy())
+		if status:
+			print(status)
+		# push a copy to the asyncio queue in a thread-safe way
+		self.loop.call_soon_threadsafe(self.q.put_nowait, indata.copy())
 
 	def stop_recording(self):
 		print("Stopping audio recording...")
-		self.is_recording = False
 		if self.stream:
 			self.stream.stop()
 			self.stream.close()
 
-		# Combine all recorded chunks
-		full_recording = np.concatenate(self.recording, axis=0)
-
-		# Save to WAV file
-		output_file = "out.wav"
-		with wave.open(output_file, 'wb') as wf:
-			wf.setnchannels(self.channels)
-			wf.setsampwidth(2)  # 16-bit PCM
-			wf.setframerate(self.samplerate)
-			wf.writeframes(full_recording.tobytes())
-		print(f"Audio saved to {output_file}")
-
 	async def recv(self):
 		from av import AudioFrame
-		if not self.is_recording:
-			return None
-
-		# Simulate receiving audio data
-		chunk = np.zeros((self.samplerate // 10, self.channels), dtype=np.int16)  # Example chunk
-		frame = AudioFrame(format="s16", layout="mono", samples=len(chunk))
-		frame.planes[0].update(chunk.tobytes())
+		# wait for next chunk
+		data = await self.q.get()
+		# data shape: (samples, channels)
+		samples = data.shape[0]
+		layout = 'mono' if self.channels == 1 else 'stereo'
+		frame = AudioFrame(format='s16', layout=layout, samples=samples)
+		frame.planes[0].update(data.tobytes())
 		frame.sample_rate = self.samplerate
-		await asyncio.sleep(0.1)  # Simulate real-time streaming
+
+		# set pts/time_base based on sample count
+		frame.pts = self._pts
+		frame.time_base = fractions.Fraction(1, self.samplerate)
+		self._pts += samples
 		return frame
 
 	async def stop(self):

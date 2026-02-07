@@ -30,10 +30,18 @@
 	<div id="menu" style="position:fixed; top:0; right:-200px; width:200px; height:100%; background:#333; color:#fff; box-shadow:-5px 0 10px rgba(0,0,0,0.5); transition:right 0.3s;">
 		<button id="connectBtn" style="width:100%; padding:10px; background:#4CAF50; color:#fff; border:none;">接続</button>
 		<button id="disconnectBtn" style="width:100%; padding:10px; background:#f44336; color:#fff; border:none;">切断</button>
+
+		<!-- 音量メーター -->
+		<div style="margin-top:12px; padding:10px; font-size:14px;">
+			<div style="margin-bottom:6px; color:#fff;">受信音量: <span id="volText">0</span>%</div>
+			<div style="width:100%; height:12px; background:#555; border-radius:6px; overflow:hidden;">
+				<div id="volBar" style="width:0%; height:100%; background:#0f0; transition:width 0.1s;"></div>
+			</div>
+		</div>
 	</div>
 
 	<!-- メニュートグルボタン -->
-	<button id="menuToggle" style="position:fixed; top:calc(50% - 40vh); right:0; transform:translateY(0); background:#333; color:#fff; border:none; border-radius:5px 0 0 5px; padding:10px;">＞</button>
+	<button id="menuToggle" style="position:fixed; top:calc(50% - 40vh); right:0; transform:translateY(0); background:#333; color:#fff; border:none; border-radius:5px 0 0 5px; padding:10px;">＜</button>
 
 	<script>
 		const menu = document.getElementById('menu');
@@ -59,6 +67,10 @@
 		let ws = null;
 		let pc = null;
 		const video = document.getElementById('remoteVideo');
+		let audioCtx = null;
+		let analyser = null;
+		let dataArray = null;
+		let volInterval = null;
 
 		// 接続処理
 		connectBtn.addEventListener('click', async () => {
@@ -81,6 +93,8 @@
 
 				// シグナリング: offer送信
 				const offer = await pc.createOffer();
+				// create AudioContext on user gesture (connect button)
+				audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 				await pc.setLocalDescription(offer);
 				ws.onopen = () => {
 					ws.send(JSON.stringify({ sdp: offer.sdp, type: offer.type }));
@@ -107,6 +121,39 @@
 				pc.ontrack = (event) => {
 					if (video.srcObject !== event.streams[0]) {
 						video.srcObject = event.streams[0];
+					}
+
+					// 音声トラックが来たら解析をセット
+					if (event.track.kind === 'audio') {
+						try {
+							if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+							// 既に解析器がある場合は再利用
+							if (!analyser) {
+								analyser = audioCtx.createAnalyser();
+								analyser.fftSize = 512;
+								dataArray = new Uint8Array(analyser.fftSize);
+							}
+							const srcStream = event.streams[0];
+							const source = audioCtx.createMediaStreamSource(srcStream);
+							source.connect(analyser);
+							// 定期的にRMSを計算してUI更新
+							if (volInterval) clearInterval(volInterval);
+							volInterval = setInterval(() => {
+								analyser.getByteTimeDomainData(dataArray);
+								let sum = 0;
+								for (let i = 0; i < dataArray.length; i++) {
+									const v = (dataArray[i] - 128) / 128;
+									sum += v * v;
+								}
+								const rms = Math.sqrt(sum / dataArray.length);
+								const display = Math.min(100, Math.round(rms * 200));
+								document.getElementById('volBar').style.width = display + '%';
+								document.getElementById('volText').textContent = display;
+								// console.log(`Client Volume: ${display}%`);
+							}, 200);
+						} catch (e) {
+							console.error('audio analyse error', e);
+						}
 					}
 				};
 
