@@ -153,6 +153,25 @@ class ScreenTrack(VideoStreamTrack):
 		self._last_frame = asyncio.get_event_loop().time()
 		img = np.array(self.sct.grab(self.monitor))
 		frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+		# 合成カーソル（簡易）: マウス位置が取得できれば画面上に小さな円を描画
+		try:
+			if _mouse is not None:
+				cx, cy = _mouse.position
+				# monitor の左上オフセットを引く
+				mx = int(cx - self.monitor.get('left', 0))
+				my = int(cy - self.monitor.get('top', 0))
+				h, w = frame.shape[:2]
+				if 0 <= mx < w and 0 <= my < h:
+					# 矢印形ポインターを描画（Windowsの通常の矢印に近い形）
+					# 外側（黒）を先に描き、内側（白）を重ねる
+					pts_outer = np.array([[mx, my], [mx + 18, my + 8], [mx + 8, my + 18]], np.int32)
+					pts_outer = pts_outer.reshape((-1, 1, 2))
+					cv2.fillPoly(frame, [pts_outer], (0, 0, 0), lineType=cv2.LINE_AA)
+					pts_inner = np.array([[mx + 2, my + 2], [mx + 14, my + 7], [mx + 7, my + 14]], np.int32)
+					pts_inner = pts_inner.reshape((-1, 1, 2))
+					cv2.fillPoly(frame, [pts_inner], (255, 255, 255), lineType=cv2.LINE_AA)
+		except Exception:
+			pass
 		video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
 		video_frame.pts = pts
 		video_frame.time_base = time_base
