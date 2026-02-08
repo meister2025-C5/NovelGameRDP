@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Simple HTTP server to serve test/client.html on the local network.
 
@@ -15,7 +14,6 @@ from functools import partial
 from pathlib import Path
 import argparse
 import socket
-import sys
 
 
 def get_lan_ip():
