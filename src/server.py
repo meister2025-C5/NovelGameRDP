@@ -102,7 +102,7 @@ class SystemAudioTrack(AudioStreamTrack):
 	def _audio_callback(self, indata, frames, time, status):
 		if status:
 			print(status)
-		# push a copy to the asyncio queue in a thread-safe way
+		# asyncio キューにスレッド安全にコピーをプッシュする
 		self.loop.call_soon_threadsafe(self.q.put_nowait, indata.copy())
 
 	def stop_recording(self):
@@ -113,16 +113,16 @@ class SystemAudioTrack(AudioStreamTrack):
 
 	async def recv(self):
 		from av import AudioFrame
-		# wait for next chunk
+		# 次のチャンクを待つ
 		data = await self.q.get()
-		# data shape: (samples, channels)
+		# データ形状: (samples, channels)
 		samples = data.shape[0]
 		layout = 'mono' if self.channels == 1 else 'stereo'
 		frame = AudioFrame(format='s16', layout=layout, samples=samples)
 		frame.planes[0].update(data.tobytes())
 		frame.sample_rate = self.samplerate
 
-		# set pts/time_base based on sample count
+		# サンプル数に基づいて pts/time_base を設定
 		frame.pts = self._pts
 		frame.time_base = fractions.Fraction(1, self.samplerate)
 		self._pts += samples
@@ -153,7 +153,7 @@ class ScreenTrack(VideoStreamTrack):
 		self._last_frame = asyncio.get_event_loop().time()
 		img = np.array(self.sct.grab(self.monitor))
 		frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-		# 合成カーソル（簡易）: マウス位置が取得できれば画面上に小さな円を描画
+		# カーソル合成（簡易）
 		try:
 			if _mouse is not None:
 				cx, cy = _mouse.position
@@ -192,7 +192,7 @@ async def offer(websocket, path):
 
 		# 音声キャプチャトラックを追加
 		audio_track = SystemAudioTrack()
-		audio_track.start_recording()  # Start recording when client connects
+		audio_track.start_recording()  # クライアント接続時に録音開始
 		pc.addTrack(audio_track)
 
 		# send server ICE candidates to client
@@ -204,10 +204,10 @@ async def offer(websocket, path):
 				except Exception as e:
 					print("Failed to send candidate:", e)
 
-		# buffer for any incoming candidates before remote description is set
+		# リモート記述が設定されるまで到着する candidate を一時バッファする
 		candidate_buffer = []
 
-		# track pressed buttons to detect stuck presses
+		# ボタンが押されたままか追跡
 		pressed_buttons = {}
 
 		async def _release_stuck_buttons():
@@ -224,10 +224,10 @@ async def offer(websocket, path):
 						pressed_buttons.pop(b, None)
 				await asyncio.sleep(1.0)
 
-		# start watchdog task for this connection
+		# この接続用の watchdog タスクを開始
 		watchdog_task = asyncio.create_task(_release_stuck_buttons())
 
-		# read signaling messages until websocket closes
+		# WebSocket が閉じるまでシグナリングメッセージを読み続ける
 		while True:
 			try:
 				msg_raw = await websocket.recv()
@@ -240,7 +240,7 @@ async def offer(websocket, path):
 				print("Received non-json signaling message")
 				continue
 
-			# Input messages (from client overlay)
+			# 入力メッセージ（クライアントのオーバーレイから受信）
 			if msg.get("type") == "input":
 				def handle_input(m):
 					if _mouse is None:
@@ -248,17 +248,17 @@ async def offer(websocket, path):
 						return
 					print('handle_input', m)
 					try:
-						# screen size (Windows)
+						# 画面サイズ（Windows）取得
 						try:
 							screen_w = ctypes.windll.user32.GetSystemMetrics(0)
 							screen_h = ctypes.windll.user32.GetSystemMetrics(1)
 						except Exception:
-							# fallback to 1920x1080
+							# フォールバック: 1920x1080
 							screen_w, screen_h = 1920, 1080
 						if m.get('input') == 'mouse':
-							# only relative movement (dx/dy normalized) is supported now
+							# 相対移動のみサポート（dx/dy は正規化）
 							action = m.get('action')
-							# apply relative movement if provided
+							# 相対移動を適用
 							if 'dx' in m or 'dy' in m:
 								dx_norm = float(m.get('dx', 0))
 								dy_norm = float(m.get('dy', 0))
@@ -267,13 +267,13 @@ async def offer(websocket, path):
 								try:
 									_mouse.move(dx_px, dy_px)
 								except Exception:
-									# fallback: adjust by current position
+									# フォールバック: 現在位置へオフセット移動
 									try:
 										cx, cy = _mouse.position
 										_mouse.position = (int(cx + dx_px), int(cy + dy_px))
 									except Exception:
 										pass
-							# handle button actions (down/up) independent of coordinates
+							# ボタン操作（down/up）を処理
 						if action == 'click':
 							button_name = m.get('button', 'left')
 							button = Button.left if button_name == 'left' else Button.right
@@ -297,7 +297,7 @@ async def offer(websocket, path):
 						elif m.get('input') == 'wheel':
 							dx = float(m.get('deltaX', 0))
 							dy = float(m.get('deltaY', 0))
-							# Convert pixel-ish delta to scroll clicks (WHEEL_DELTA=120)
+							# スクロール量へ変換（WHEEL_DELTA=120 想定）
 							try:
 								sx = int(dx / 120)
 								sy = int(dy / 120)
@@ -307,16 +307,16 @@ async def offer(websocket, path):
 							_mouse.scroll(sx, sy)
 					except Exception as e:
 						print('handle_input error', e)
-				# delegate to thread
+				# スレッドに処理を委譲
 				asyncio.get_event_loop().run_in_executor(None, handle_input, msg)
 				continue
 
-			# Offer handling
+			# offer の処理
 			if msg.get("type") == "offer" and "sdp" in msg:
 				offer = RTCSessionDescription(sdp=msg["sdp"], type=msg["type"])
 				await pc.setRemoteDescription(offer)
 
-				# apply any buffered candidates (convert dict->RTCIceCandidate)
+				# バッファした candidate を適用（dict→RTCIceCandidate に変換）
 				for c in candidate_buffer:
 					try:
 						if isinstance(c, dict):
@@ -332,15 +332,15 @@ async def offer(websocket, path):
 						print("Error adding buffered candidate:", e)
 				candidate_buffer.clear()
 
-				# create and send answer
+				# answer を作成して送信
 				answer = await pc.createAnswer()
 				await pc.setLocalDescription(answer)
 				await websocket.send(json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}))
 
-			# Candidate handling
+			# candidate の処理
 			elif msg.get("type") == "candidate" and msg.get("candidate"):
 				cand = msg["candidate"]
-				# convert incoming candidate dict to RTCIceCandidate
+				# 受信した candidate dict を RTCIceCandidate に変換
 				try:
 					rtc_cand = RTCIceCandidate(
 						sdpMid=cand.get('sdpMid'),
@@ -351,7 +351,7 @@ async def offer(websocket, path):
 					rtc_cand = None
 
 				if pc.remoteDescription is None:
-					# buffer the raw dict; will convert when applying
+					# 生の dict をバッファし、適用時に変換する
 					candidate_buffer.append(cand)
 				else:
 					if rtc_cand is not None:
@@ -364,8 +364,8 @@ async def offer(websocket, path):
 			else:
 				print("Unexpected signaling message:", msg)
 
-		# connection closed, cleanup
-		# cancel watchdog
+		# 接続が閉じられたためクリーンアップ
+		# watchdog をキャンセル
 		try:
 			watchdog_task.cancel()
 		except Exception:
@@ -380,7 +380,7 @@ async def offer(websocket, path):
 async def main():
 	async with websockets.serve(offer, SERVER_IP, 8765):
 		print(f"Signaling server started on ws://{SERVER_IP}:8765")
-		await asyncio.Future()  # run forever
+		await asyncio.Future()  # 常時実行（永久待機）
 
 if __name__ == "__main__":
 	asyncio.run(main())

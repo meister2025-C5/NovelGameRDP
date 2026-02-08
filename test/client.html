@@ -118,20 +118,20 @@
 
 				// シグナリング: offer送信
 				const offer = await pc.createOffer();
-				// create AudioContext on user gesture (connect button)
+				// ユーザー操作（接続ボタン）で AudioContext を生成
 				audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 				await pc.setLocalDescription(offer);
 				const handleWsOpen = () => {
 					ws.send(JSON.stringify({ sdp: offer.sdp, type: offer.type }));
 					isOfferSent = true;
-					// flush queued candidates
+					// バッファした candidate を送信
 					while (candidateQueue.length) {
 						const c = candidateQueue.shift();
 						ws.send(JSON.stringify({ type: 'candidate', candidate: c }));
 					}
 				};
 				ws.onopen = handleWsOpen;
-				// if websocket already opened (rare), call handler immediately
+				// WebSocket が既に開いている場合（稀）すぐにハンドラを実行
 				if (ws.readyState === WebSocket.OPEN) {
 					handleWsOpen();
 				}
@@ -147,7 +147,7 @@
 				};
 
 			// -------------------------------
-			// Trackpad overlay: map input -> websocket messages
+			// トラックパッドオーバーレイ: 入力を WebSocket メッセージに変換
 			// -------------------------------
 			const overlay = document.getElementById('trackpadOverlay');
 			let overlayRect = null;
@@ -178,13 +178,13 @@
 				return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
 			}
 
-			// Trackpad-style relative move: send dx/dy normalized
+			// トラックパッド風の相対移動: 正規化された dx/dy を送信
 			let lastClientPos = null;
 			let relRafScheduled = false;
 			let relAccum = { dx: 0, dy: 0 };
-			let isTouchActive = false; // suppress synthetic mouse events after touch
+			let isTouchActive = false; // タッチ後の合成マウスイベントを抑制するフラグ
 			function scheduleRelativeMove(normDx, normDy) {
-				// accumulate small deltas, send on rAF
+				// 小さな差分を蓄積し、rAF ごとに送信
 				relAccum.dx += normDx;
 				relAccum.dy += normDy;
 				if (relRafScheduled) return;
@@ -200,12 +200,12 @@
 			let mouseStartTime = 0;
 			let mouseMoved = false;
 			overlay.addEventListener('mousedown', (e) => {
-				if (isTouchActive) return; // ignore synthetic mouse events
+				if (isTouchActive) return; // タッチ由来の合成マウスイベントを無視
 				e.preventDefault();
 				lastClientPos = { x: e.clientX, y: e.clientY };
 				mouseStartTime = Date.now();
 				mouseMoved = false;
-				// do not send down here; treat click on mouseup
+				// ここでは down を送らない（クリック判定は mouseup で行う）
 			});
 			overlay.addEventListener('mousemove', (e) => {
 				if (isTouchActive) return;
@@ -227,20 +227,20 @@
 				if (isTouchActive) return;
 				e.preventDefault();
 				const dt = Date.now() - mouseStartTime;
-				// treat short click (no movement) as click: send single click message
+				// 短いクリック（移動なし）はクリック扱いにする: 単一の click メッセージを送信
 				if (!mouseMoved && dt <= TAP_MAX_MS) {
 					sendInput({ type: 'input', input: 'mouse', action: 'click', button: 'left' });
 				}
 				lastClientPos = null;
 			});
 
-			// Wheel (mouse two-finger scroll also generates wheel)
+			// ホイール（2本指スクロールは wheel イベントになる）
 			overlay.addEventListener('wheel', (e) => {
 				e.preventDefault();
 				sendInput({ type: 'input', input: 'wheel', deltaX: e.deltaX, deltaY: e.deltaY });
 			}, { passive: false });
 
-			// Left/Right UI buttons -> send mouse clicks (left: right-click, right: left-click)
+			// 左右の UI ボタン -> マウスクリックを送信（左ボタンは右クリック、右ボタンは左クリック）
 			const leftBtnEl = document.getElementById('leftBtn');
 			const rightBtnEl = document.getElementById('rightBtn');
 			if (leftBtnEl) {
@@ -256,7 +256,7 @@
 				});
 			}
 
-			// Touch handling: single-finger -> relative mouse, two-finger -> scroll
+			// タッチ処理: シングルフィンガーは相対マウス、2本指はスクロール
 			let twoFinger = false;
 			let lastTwoCenterY = null;
 			let lastTouchPos = null;
@@ -288,7 +288,7 @@
 					const cY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
 					const dy = cY - (lastTwoCenterY || cY);
 					lastTwoCenterY = cY;
-					// send as wheel
+					// ホイールとして送信
 					sendInput({ type: 'input', input: 'wheel', deltaX: 0, deltaY: dy });
 				} else if (e.touches.length === 1) {
 					const t = e.touches[0];
@@ -311,18 +311,18 @@
 				e.preventDefault();
 				if (!twoFinger && e.changedTouches.length === 1) {
 					const dt = Date.now() - touchStartTime;
-					// tap-to-click disabled: do not send click on touchend
+					// タップでのクリックは無効化: touchend でクリックを送らない
 					lastTouchPos = null;
 				}
 				if (e.touches.length < 2) {
 					twoFinger = false;
 					lastTwoCenterY = null;
 				}
-				// keep ignoring synthetic mouse events a short time after touch
+				// タッチの直後は合成マウスイベントを短時間無視する
 				setTimeout(() => { isTouchActive = false; }, 200);
 			}, { passive: false });
 
-				// ICE candidate送信
+				// ICE candidate の送信
 				pc.onicecandidate = (event) => {
 					if (event.candidate) {
 						if (ws && ws.readyState === WebSocket.OPEN && isOfferSent) {
@@ -365,7 +365,7 @@
 								const display = Math.min(100, Math.round(rms * 200));
 								document.getElementById('volBar').style.width = display + '%';
 								document.getElementById('volText').textContent = display;
-								// console.log(`Client Volume: ${display}%`);
+								// console.log(`受信音量: ${display}%`);
 							}, 200);
 							try { video.play().catch(()=>{}); } catch(e) {}
 						} catch (e) {
