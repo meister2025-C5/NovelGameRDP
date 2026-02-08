@@ -1,5 +1,3 @@
-# 必要なパッケージ: aiortc, websockets, mss, opencv-python, av
-
 import asyncio
 import json
 import websockets
@@ -8,8 +6,6 @@ import cv2
 import numpy as np
 import mss
 import sounddevice as sd
-import threading
-import wave
 import os
 import fractions
 import time

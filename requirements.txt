@@ -1,0 +1,8 @@
+aiortc
+websockets
+mss
+opencv-python
+av
+sounddevice
+pynput
+numpy
