@@ -12,6 +12,14 @@ import threading
 import wave
 import os
 import fractions
+import time
+try:
+	from pynput.mouse import Controller, Button
+	import ctypes
+	_mouse = Controller()
+except Exception as e:
+	print("pynput import/init failed:", e)
+	_mouse = None
 
 
 
@@ -180,6 +188,26 @@ async def offer(websocket, path):
 		# buffer for any incoming candidates before remote description is set
 		candidate_buffer = []
 
+		# track pressed buttons to detect stuck presses
+		pressed_buttons = {}
+
+		async def _release_stuck_buttons():
+			import time
+			while True:
+				now = time.time()
+				for b, ts in list(pressed_buttons.items()):
+					if now - ts > 5.0:
+						print(f"Releasing stuck button: {b}")
+						try:
+							_mouse.release(Button.left if b == 'left' else Button.right)
+						except Exception as e:
+							print('watchdog release error', e)
+						pressed_buttons.pop(b, None)
+				await asyncio.sleep(1.0)
+
+		# start watchdog task for this connection
+		watchdog_task = asyncio.create_task(_release_stuck_buttons())
+
 		# read signaling messages until websocket closes
 		while True:
 			try:
@@ -191,6 +219,77 @@ async def offer(websocket, path):
 				msg = json.loads(msg_raw)
 			except Exception:
 				print("Received non-json signaling message")
+				continue
+
+			# Input messages (from client overlay)
+			if msg.get("type") == "input":
+				def handle_input(m):
+					if _mouse is None:
+						print("Mouse controller not available")
+						return
+					print('handle_input', m)
+					try:
+						# screen size (Windows)
+						try:
+							screen_w = ctypes.windll.user32.GetSystemMetrics(0)
+							screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+						except Exception:
+							# fallback to 1920x1080
+							screen_w, screen_h = 1920, 1080
+						if m.get('input') == 'mouse':
+							# only relative movement (dx/dy normalized) is supported now
+							action = m.get('action')
+							# apply relative movement if provided
+							if 'dx' in m or 'dy' in m:
+								dx_norm = float(m.get('dx', 0))
+								dy_norm = float(m.get('dy', 0))
+								dx_px = int(dx_norm * screen_w)
+								dy_px = int(dy_norm * screen_h)
+								try:
+									_mouse.move(dx_px, dy_px)
+								except Exception:
+									# fallback: adjust by current position
+									try:
+										cx, cy = _mouse.position
+										_mouse.position = (int(cx + dx_px), int(cy + dy_px))
+									except Exception:
+										pass
+							# handle button actions (down/up) independent of coordinates
+						if action == 'click':
+							button_name = m.get('button', 'left')
+							button = Button.left if button_name == 'left' else Button.right
+							try:
+								_mouse.click(button)
+							except Exception as e:
+								print('click error', e)
+						if action == 'down':
+							button_name = m.get('button', 'left')
+							button = Button.left if button_name == 'left' else Button.right
+							_mouse.press(button)
+							pressed_buttons[button_name] = time.time()
+						elif action == 'up':
+							button_name = m.get('button', 'left')
+							button = Button.left if button_name == 'left' else Button.right
+							try:
+								_mouse.release(button)
+							except Exception as e:
+								print('release error', e)
+							pressed_buttons.pop(button_name, None)
+						elif m.get('input') == 'wheel':
+							dx = float(m.get('deltaX', 0))
+							dy = float(m.get('deltaY', 0))
+							# Convert pixel-ish delta to scroll clicks (WHEEL_DELTA=120)
+							try:
+								sx = int(dx / 120)
+								sy = int(dy / 120)
+							except Exception:
+								sx = 0
+								sy = int(dy)
+							_mouse.scroll(sx, sy)
+					except Exception as e:
+						print('handle_input error', e)
+				# delegate to thread
+				asyncio.get_event_loop().run_in_executor(None, handle_input, msg)
 				continue
 
 			# Offer handling
@@ -247,6 +346,11 @@ async def offer(websocket, path):
 				print("Unexpected signaling message:", msg)
 
 		# connection closed, cleanup
+		# cancel watchdog
+		try:
+			watchdog_task.cancel()
+		except Exception:
+			pass
 		await audio_track.stop()
 		await pc.close()
 		pcs.discard(pc)
