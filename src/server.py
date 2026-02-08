@@ -13,13 +13,9 @@ import wave
 import os
 import fractions
 import time
-try:
-	from pynput.mouse import Controller, Button
-	import ctypes
-	_mouse = Controller()
-except Exception as e:
-	print("pynput import/init failed:", e)
-	_mouse = None
+from pynput.mouse import Controller, Button
+import ctypes
+_mouse = Controller()
 
 
 
@@ -246,7 +242,6 @@ async def offer(websocket, path):
 					if _mouse is None:
 						print("Mouse controller not available")
 						return
-					print('handle_input', m)
 					try:
 						# 画面サイズ（Windows）取得
 						try:
