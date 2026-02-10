@@ -12,6 +12,10 @@ import time
 from pynput.mouse import Controller, Button
 import ctypes
 _mouse = Controller()
+# カーソル描画のスケール
+CURSOR_SCALE = 3.0
+# マウス移動のスピードスケール
+MOUSE_MOVE_SCALE = 1.7
 
 
 
@@ -154,12 +158,21 @@ class ScreenTrack(VideoStreamTrack):
 				my = int(cy - self.monitor.get('top', 0))
 				h, w = frame.shape[:2]
 				if 0 <= mx < w and 0 <= my < h:
-					# 矢印形ポインターを描画（Windowsの通常の矢印に近い形）
-					# 外側（黒）を先に描き、内側（白）を重ねる
-					pts_outer = np.array([[mx, my], [mx + 18, my + 8], [mx + 8, my + 18]], np.int32)
+					# 矢印形ポインターを描画（拡大）
+					# スケールを適用して外側（黒）→内側（白）を描画
+					s = CURSOR_SCALE
+					pts_outer = np.array([
+						[mx, my],
+						[mx + int(18 * s), my + int(8 * s)],
+						[mx + int(8 * s), my + int(18 * s)]
+					], np.int32)
 					pts_outer = pts_outer.reshape((-1, 1, 2))
 					cv2.fillPoly(frame, [pts_outer], (0, 0, 0), lineType=cv2.LINE_AA)
-					pts_inner = np.array([[mx + 2, my + 2], [mx + 14, my + 7], [mx + 7, my + 14]], np.int32)
+					pts_inner = np.array([
+						[mx + int(2 * s), my + int(2 * s)],
+						[mx + int(14 * s), my + int(7 * s)],
+						[mx + int(7 * s), my + int(14 * s)]
+					], np.int32)
 					pts_inner = pts_inner.reshape((-1, 1, 2))
 					cv2.fillPoly(frame, [pts_inner], (255, 255, 255), lineType=cv2.LINE_AA)
 		except Exception:
@@ -253,8 +266,9 @@ async def offer(websocket, path):
 							if 'dx' in m or 'dy' in m:
 								dx_norm = float(m.get('dx', 0))
 								dy_norm = float(m.get('dy', 0))
-								dx_px = int(dx_norm * screen_w)
-								dy_px = int(dy_norm * screen_h)
+								# 画面幅/高さに基づくピクセル量にスケールを適用
+								dx_px = int(dx_norm * screen_w * MOUSE_MOVE_SCALE)
+								dy_px = int(dy_norm * screen_h * MOUSE_MOVE_SCALE)
 								try:
 									_mouse.move(dx_px, dy_px)
 								except Exception:
@@ -264,38 +278,27 @@ async def offer(websocket, path):
 										_mouse.position = (int(cx + dx_px), int(cy + dy_px))
 									except Exception:
 										pass
-							# ボタン操作（down/up）を処理
-						if action == 'click':
-							button_name = m.get('button', 'left')
-							button = Button.left if button_name == 'left' else Button.right
-							try:
-								_mouse.click(button)
-							except Exception as e:
-								print('click error', e)
-						if action == 'down':
-							button_name = m.get('button', 'left')
-							button = Button.left if button_name == 'left' else Button.right
-							_mouse.press(button)
-							pressed_buttons[button_name] = time.time()
-						elif action == 'up':
-							button_name = m.get('button', 'left')
-							button = Button.left if button_name == 'left' else Button.right
-							try:
-								_mouse.release(button)
-							except Exception as e:
-								print('release error', e)
-							pressed_buttons.pop(button_name, None)
-						elif m.get('input') == 'wheel':
-							dx = float(m.get('deltaX', 0))
-							dy = float(m.get('deltaY', 0))
-							# スクロール量へ変換（WHEEL_DELTA=120 想定）
-							try:
-								sx = int(dx / 120)
-								sy = int(dy / 120)
-							except Exception:
-								sx = 0
-								sy = int(dy)
-							_mouse.scroll(sx, sy)
+							# ボタン操作（click/down/up）を処理
+							if action == 'click':
+								button_name = m.get('button', 'left')
+								button = Button.left if button_name == 'left' else Button.right
+								try:
+									_mouse.click(button)
+								except Exception as e:
+									print('click error', e)
+							elif action == 'down':
+								button_name = m.get('button', 'left')
+								button = Button.left if button_name == 'left' else Button.right
+								_mouse.press(button)
+								pressed_buttons[button_name] = time.time()
+							elif action == 'up':
+								button_name = m.get('button', 'left')
+								button = Button.left if button_name == 'left' else Button.right
+								try:
+									_mouse.release(button)
+								except Exception as e:
+									print('release error', e)
+								pressed_buttons.pop(button_name, None)
 					except Exception as e:
 						print('handle_input error', e)
 				# スレッドに処理を委譲
@@ -369,9 +372,15 @@ async def offer(websocket, path):
 		print("Error in offer handler:", e)
 
 async def main():
-	async with websockets.serve(offer, SERVER_IP, 8765):
-		print(f"Signaling server started on ws://{SERVER_IP}:8765")
-		await asyncio.Future()  # 常時実行（永久待機）
+	host = '0.0.0.0'
+	port = 8765
+	try:
+		async with websockets.serve(offer, host, port):
+			print(f"Signaling server started on ws://{host}:{port}")
+			await asyncio.Future()  # 常時実行（永久待機）
+	except Exception as e:
+		print(f"Failed to start signaling server on {host}:{port}: {e}")
+		raise
 
 if __name__ == "__main__":
 	asyncio.run(main())
