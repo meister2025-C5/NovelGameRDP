@@ -38,16 +38,20 @@
 		<div style="padding:10px; font-size:14px; color:#fff;">
 			接続状態: <span id="connectionStatus" style="font-weight:bold; color:#f44;">停止中</span>
 		</div>
+
+		<!-- メニュートグルボタン（メニューに含めることで左端に追従） -->
+		<button id="menuToggle" style="position:absolute; left:-40px; top:0; transform:none; width:40px; height:80px; display:flex; align-items:center; justify-content:center; background:#333; color:#fff; border:none; border-radius:24px 0 0 24px; padding:0; font-size:1.2rem;">&lt;</button>
 	</div>
 
-	<!-- メニュートグルボタン -->
-	<button id="menuToggle" style="position:fixed; top:calc(50% - 40vh); right:0; transform:translateY(0); background:#333; color:#fff; border:none; border-radius:5px 0 0 5px; padding:10px;">＜</button>
+
 
 	<script>
 		const menu = document.getElementById('menu');
 		const menuToggle = document.getElementById('menuToggle');
 		let menuOpen = false;
 
+		// トグルはメニュー内に含めるため、メニューの right が変われば
+		// 自動的に位置が変わる。クリックで開閉のみ行う。
 		menuToggle.addEventListener('click', () => {
 			menuOpen = !menuOpen;
 			menu.style.right = menuOpen ? '0' : '-200px';
