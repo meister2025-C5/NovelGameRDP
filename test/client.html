@@ -18,8 +18,8 @@
 			<!-- ビデオ -->
 			<div id="videoWrapper" style="flex:1; display:flex; align-items:center; justify-content:center; position:relative;">
 				<video id="remoteVideo" autoplay playsinline 
-					style="width:100%; max-width:100vw; max-height:80vh; aspect-ratio:16/9; background:#000; border-radius:1vw; box-shadow:0 0 20px #222; display:block;"></video>
-				<!-- トラックパッドオーバーレイ（位置・サイズはJSで video の表示領域に合わせる） -->
+					style="width:100%; max-width:100vw; max-height:80vh; aspect-ratio:16/9; background:#000; border-radius:1vw; box-shadow:0 0 20px #222; display:block;"></video>			<!-- クライアント側カーソル描画用 canvas -->
+			<canvas id="cursorCanvas" style="position:fixed; top:0; left:0; width:0; height:0; z-index:10;"></canvas>				<!-- トラックパッドオーバーレイ（位置・サイズはJSで video の表示領域に合わせる） -->
 				<div id="trackpadOverlay" style="position:fixed; top:0; left:0; width:0; height:0; background:rgba(0,0,0,0); z-index:20; touch-action:none;"></div>
 			</div>
 			<!-- 右ボタン -->
@@ -76,6 +76,13 @@
 		let isOfferSent = false;
 		let candidateQueue = [];
 		const connectionStatusElem = document.getElementById('connectionStatus');
+		const cursorCanvas = document.getElementById('cursorCanvas');
+		const cursorCtx = cursorCanvas.getContext('2d');
+		const CURSOR_SCALE = 0.5;
+		let clientMouseX = 128;  // 0～256スケール（中央から開始）
+		let clientMouseY = 128;
+		let cursorCanvasRect = null;
+		let drawCursorRafId = null;
 
 		function setConnectionStatus(state) {
 			if (!connectionStatusElem) return;
@@ -140,8 +147,7 @@
 					}
 				};
 
-			// -------------------------------
-			// トラックパッドオーバーレイ: 入力を WebSocket メッセージに変換
+// トラックパッドオーバーレイ: 入力を WebSocket メッセージに変換
 			// -------------------------------
 			const overlay = document.getElementById('trackpadOverlay');
 			let overlayRect = null;
@@ -159,6 +165,76 @@
 			video.addEventListener('play', updateOverlay);
 			setInterval(updateOverlay, 300);
 
+			// --- クライアント側カーソル描画 ---
+			function updateCursorCanvas() {
+				const rect = video.getBoundingClientRect();
+				cursorCanvasRect = rect;
+				cursorCanvas.style.left = rect.left + 'px';
+				cursorCanvas.style.top = rect.top + 'px';
+				cursorCanvas.style.width = rect.width + 'px';
+				cursorCanvas.style.height = rect.height + 'px';
+				cursorCanvas.width = rect.width;
+				cursorCanvas.height = rect.height;
+			}
+			updateCursorCanvas();
+			window.addEventListener('resize', updateCursorCanvas);
+			window.addEventListener('scroll', updateCursorCanvas);
+			video.addEventListener('loadedmetadata', updateCursorCanvas);
+			video.addEventListener('play', updateCursorCanvas);
+			
+			function drawCursor() {
+				if (!cursorCtx || !cursorCanvasRect) return;
+				// canvas をクリア
+				cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+				
+				// clientMouseX/Y は0～256スケール、canvasピクセルに変換
+				const canvasMx = (clientMouseX / 256) * cursorCanvas.width;
+				const canvasMy = (clientMouseY / 256) * cursorCanvas.height;
+				
+				// canvas内かチェック
+				if (canvasMx < 0 || canvasMx >= cursorCanvas.width ||
+					canvasMy < 0 || canvasMy >= cursorCanvas.height) {
+					return;
+				}
+				
+				const s = CURSOR_SCALE;
+				const mx = Math.round(canvasMx);
+				const my = Math.round(canvasMy);
+				
+				// 外側の三角形（黒）を描画
+				cursorCtx.fillStyle = 'rgb(0, 0, 0)';
+				cursorCtx.beginPath();
+				cursorCtx.moveTo(mx, my);
+				cursorCtx.lineTo(mx + 18 * s, my + 8 * s);
+				cursorCtx.lineTo(mx + 8 * s, my + 18 * s);
+				cursorCtx.closePath();
+				cursorCtx.fill();
+				
+				// 内側の三角形（白）を描画
+				cursorCtx.fillStyle = 'rgb(255, 255, 255)';
+				cursorCtx.beginPath();
+				cursorCtx.moveTo(mx + 2 * s, my + 2 * s);
+				cursorCtx.lineTo(mx + 14 * s, my + 7 * s);
+				cursorCtx.lineTo(mx + 7 * s, my + 14 * s);
+				cursorCtx.closePath();
+				cursorCtx.fill();
+			}
+			
+			function scheduleCursorDraw() {
+				if (drawCursorRafId) return;
+				drawCursorRafId = requestAnimationFrame(() => {
+					drawCursorRafId = null;
+					drawCursor();
+					scheduleCursorDraw();
+				});
+			}
+			scheduleCursorDraw();
+			// ---
+
+		// -------------------------------
+		// トラックパッドオーバーレイ: 入力を WebSocket メッセージに変換
+		// -------------------------------
+
 			function sendInput(msg) {
 				try {
 					if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -172,27 +248,23 @@
 				return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
 			}
 
-			// トラックパッド風の相対移動: 正規化された dx/dy を送信
+			// 256スケール絶対座標システム
 			let lastClientPos = null;
-			let relRafScheduled = false;
-			let relAccum = { dx: 0, dy: 0 };
+			let mouseMoveRafScheduled = false;
 			let isTouchActive = false; // タッチ後の合成マウスイベントを抑制するフラグ
-			function scheduleRelativeMove(normDx, normDy) {
-				// 小さな差分を蓄積し、rAF ごとに送信
-				relAccum.dx += normDx;
-				relAccum.dy += normDy;
-				if (relRafScheduled) return;
-				relRafScheduled = true;
+			function scheduleMouseUpdate() {
+				if (mouseMoveRafScheduled) return;
+				mouseMoveRafScheduled = true;
 				requestAnimationFrame(() => {
-					relRafScheduled = false;
-					const send = { type: 'input', input: 'mouse', action: 'move', dx: relAccum.dx, dy: relAccum.dy };
-					relAccum.dx = 0; relAccum.dy = 0;
+					mouseMoveRafScheduled = false;
+					// 絶対座標（0～256）をそのまま送信
+					const send = { type: 'input', input: 'mouse', action: 'move', x: clientMouseX, y: clientMouseY };
 					sendInput(send);
 				});
 			}
 
-			let mouseStartTime = 0;
-			let mouseMoved = false;
+		let mouseStartTime = 0;
+		let mouseMoved = false;
 			overlay.addEventListener('mousedown', (e) => {
 				if (isTouchActive) return; // タッチ由来の合成マウスイベントを無視
 				e.preventDefault();
@@ -213,9 +285,14 @@
 				const dy = e.clientY - lastClientPos.y;
 				if (Math.hypot(dx, dy) > TAP_MOVE_PX) mouseMoved = true;
 				lastClientPos = { x: e.clientX, y: e.clientY };
-				const normDx = dx / overlayRect.width;
-				const normDy = dy / overlayRect.height;
-				scheduleRelativeMove(normDx, normDy);
+				
+				// クライアント側カーソル位置を256スケールで累積更新
+				clientMouseX += dx * (256 / overlayRect.width);
+				clientMouseY += dy * (256 / overlayRect.height);
+				clientMouseX = Math.max(0, Math.min(256, clientMouseX));
+				clientMouseY = Math.max(0, Math.min(256, clientMouseY));
+				
+				scheduleMouseUpdate();
 			});
 			overlay.addEventListener('mouseup', (e) => {
 				if (isTouchActive) return;
@@ -295,9 +372,14 @@
 					const dy = t.clientY - lastTouchPos.y;
 					if (Math.hypot(dx, dy) > TAP_MOVE_PX) touchMoved = true;
 					lastTouchPos = { x: t.clientX, y: t.clientY };
-					const normDx = dx / overlayRect.width;
-					const normDy = dy / overlayRect.height;
-					scheduleRelativeMove(normDx, normDy);
+					
+					// クライアント側カーソル位置を256スケールで累積更新
+					clientMouseX += dx * (256 / overlayRect.width);
+					clientMouseY += dy * (256 / overlayRect.height);
+					clientMouseX = Math.max(0, Math.min(256, clientMouseX));
+					clientMouseY = Math.max(0, Math.min(256, clientMouseY));
+					
+					scheduleMouseUpdate();
 				}
 			}, { passive: false });
 
@@ -357,6 +439,12 @@
 		// 切断処理
 		disconnectBtn.addEventListener('click', async () => {
 			try {
+				// 描画ループをキャンセル
+				if (drawCursorRafId) {
+					cancelAnimationFrame(drawCursorRafId);
+					drawCursorRafId = null;
+				}
+				
 				// WebSocketを閉じる
 				if (ws) {
 					ws.close();

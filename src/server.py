@@ -13,7 +13,7 @@ from pynput.mouse import Controller, Button
 import ctypes
 _mouse = Controller()
 # カーソル描画のスケール
-CURSOR_SCALE = 3.0
+CURSOR_SCALE = 0.5
 # マウス移動のスピードスケール
 MOUSE_MOVE_SCALE = 1.7
 
@@ -149,34 +149,6 @@ class ScreenTrack(VideoStreamTrack):
 		self._last_frame = asyncio.get_event_loop().time()
 		img = np.array(self.sct.grab(self.monitor))
 		frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-		# カーソル合成（簡易）
-		try:
-			if _mouse is not None:
-				cx, cy = _mouse.position
-				# monitor の左上オフセットを引く
-				mx = int(cx - self.monitor.get('left', 0))
-				my = int(cy - self.monitor.get('top', 0))
-				h, w = frame.shape[:2]
-				if 0 <= mx < w and 0 <= my < h:
-					# 矢印形ポインターを描画（拡大）
-					# スケールを適用して外側（黒）→内側（白）を描画
-					s = CURSOR_SCALE
-					pts_outer = np.array([
-						[mx, my],
-						[mx + int(18 * s), my + int(8 * s)],
-						[mx + int(8 * s), my + int(18 * s)]
-					], np.int32)
-					pts_outer = pts_outer.reshape((-1, 1, 2))
-					cv2.fillPoly(frame, [pts_outer], (0, 0, 0), lineType=cv2.LINE_AA)
-					pts_inner = np.array([
-						[mx + int(2 * s), my + int(2 * s)],
-						[mx + int(14 * s), my + int(7 * s)],
-						[mx + int(7 * s), my + int(14 * s)]
-					], np.int32)
-					pts_inner = pts_inner.reshape((-1, 1, 2))
-					cv2.fillPoly(frame, [pts_inner], (255, 255, 255), lineType=cv2.LINE_AA)
-		except Exception:
-			pass
 		video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
 		video_frame.pts = pts
 		video_frame.time_base = time_base
@@ -260,24 +232,22 @@ async def offer(websocket, path):
 							# フォールバック: 1920x1080
 							screen_w, screen_h = 1920, 1080
 						if m.get('input') == 'mouse':
-							# 相対移動のみサポート（dx/dy は正規化）
+							# 256スケール絶対座標（x/y）をサポート
 							action = m.get('action')
-							# 相対移動を適用
-							if 'dx' in m or 'dy' in m:
-								dx_norm = float(m.get('dx', 0))
-								dy_norm = float(m.get('dy', 0))
-								# 画面幅/高さに基づくピクセル量にスケールを適用
-								dx_px = int(dx_norm * screen_w * MOUSE_MOVE_SCALE)
-								dy_px = int(dy_norm * screen_h * MOUSE_MOVE_SCALE)
+							# 絶対座標を適用
+							if 'x' in m or 'y' in m:
+								x_256 = float(m.get('x', 128))
+								y_256 = float(m.get('y', 128))
+								# 256スケールから0-1に正規化
+								x_norm = x_256 / 256.0
+								y_norm = y_256 / 256.0
+								# スクリーン座標に変換
+								x_px = int(x_norm * screen_w)
+								y_px = int(y_norm * screen_h)
 								try:
-									_mouse.move(dx_px, dy_px)
-								except Exception:
-									# フォールバック: 現在位置へオフセット移動
-									try:
-										cx, cy = _mouse.position
-										_mouse.position = (int(cx + dx_px), int(cy + dy_px))
-									except Exception:
-										pass
+									_mouse.position = (x_px, y_px)
+								except Exception as e:
+									print('position error', e)
 							# ボタン操作（click/down/up）を処理
 							if action == 'click':
 								button_name = m.get('button', 'left')
